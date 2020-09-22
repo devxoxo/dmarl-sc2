@@ -1,11 +1,6 @@
 import random
-import time
-import math
 import os.path
-
 import numpy as np
-import pandas as pd
-
 
 from pysc2.agents import base_agent
 from pysc2.env import sc2_env, run_loop
@@ -15,7 +10,7 @@ from absl import app
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from skdrl.pytorch.model.mlp import NaiveMultiLayerPerceptron
+from skdrl.pytorch.model.mlp import DuelingQNet
 from skdrl.common.memory.memory import ExperienceReplayMemory
 from skdrl.pytorch.model.dqn import DQN, prepare_training_inputs
 
@@ -25,10 +20,29 @@ writer = SummaryWriter()
 class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
     actions = ("do_nothing",
                "harvest_minerals",
+               "harvest_vespene",
+               "build_refinery",
                "build_supply_depot",
                "build_barracks",
+               "build_factory",
+               "build_techlab",
+               "build_command_center",
+               "train_scv",
                "train_marine",
-               "attack")
+               "train_tank",
+               "marine_attack",
+               "tank_attack")
+
+    def unit_type_is_selected(self, obs, unit_type):
+        if (len(obs.observation.single_select) > 0 and
+            obs.observation.single_select[0].unit_type == unit_type):
+              return True
+
+        if (len(obs.observation.multi_select) > 0 and
+            obs.observation.multi_select[0].unit_type == unit_type):
+              return True
+
+        return False
 
     def get_my_units_by_type(self, obs, unit_type):
         return [unit for unit in obs.observation.raw_units
@@ -92,16 +106,37 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
                 "now", scv.tag, mineral_patch.tag)
         return actions.RAW_FUNCTIONS.no_op()
 
+    def harvest_vespene(self, obs):
+        refineries = self.get_my_units_by_type(obs, units.Terran.Refinery)
+        scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
+        idle_scvs = [scv for scv in scvs if scv.order_length == 0]
+        if len(idle_scvs) > 0 and len(refineries) > 0:
+            scv = random.choice(idle_scvs)
+            distances = self.get_distances(obs, refineries, (scv.x, scv.y))
+            refinery = refineries[np.argmin(distances)]
+            return actions.RAW_FUNCTIONS.Harvest_Gather_unit(
+                "now", scv.tag, refinery.tag)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    # supply depot을 5개 건설
     def build_supply_depot(self, obs):
         supply_depots = self.get_my_units_by_type(obs, units.Terran.SupplyDepot)
         scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
-        if (len(supply_depots) == 0 and obs.observation.player.minerals >= 100 and
+        if (len(supply_depots) < 5 and obs.observation.player.minerals >= 100 and
                 len(scvs) > 0):
-            supply_depot_xy = (22, 26) if self.base_top_left else (35, 42)
-            distances = self.get_distances(obs, scvs, supply_depot_xy)
+            supply_depot_coordinates = [(19, 26), (22, 26), (24, 25), (26, 24), (28, 23)] if self.base_top_left \
+                else [(29, 42), (32, 42), (35, 42), (37, 42), (39, 42)]
+            now_supply_depot_coordinates = [(supply_depot.x, supply_depot.y) for supply_depot in supply_depots]
+
+            remain_supply_depot_coordinates = []
+            for c in supply_depot_coordinates:
+                if c not in now_supply_depot_coordinates:
+                    remain_supply_depot_coordinates.append(c)
+
+            distances = self.get_distances(obs, scvs, remain_supply_depot_coordinates[0])
             scv = scvs[np.argmin(distances)]
             return actions.RAW_FUNCTIONS.Build_SupplyDepot_pt(
-                "now", scv.tag, supply_depot_xy)
+                "now", scv.tag, remain_supply_depot_coordinates[0])
         return actions.RAW_FUNCTIONS.no_op()
 
     def build_barracks(self, obs):
@@ -118,6 +153,78 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
                 "now", scv.tag, barracks_xy)
         return actions.RAW_FUNCTIONS.no_op()
 
+    def build_refinery(self, obs):
+        completed_supply_depots = self.get_my_completed_units_by_type(
+            obs, units.Terran.SupplyDepot)
+        scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
+        if (len(completed_supply_depots) > 0 and obs.observation.player.minerals >= 100 and len(scvs) > 0):
+            vespene_patches = [unit for unit in obs.observation.raw_units
+                               if unit.unit_type in [
+                                   units.Neutral.RichVespeneGeyser,
+                                   units.Neutral.VespeneGeyser
+                               ]]
+            scv = random.choice(scvs)
+            distances = self.get_distances(obs, vespene_patches, (scv.x, scv.y))
+            vespene_patch = vespene_patches[np.argmin(distances)]
+            return actions.RAW_FUNCTIONS.Build_Refinery_pt(
+                "now", scv.tag, vespene_patch.tag)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    def build_factory(self, obs):
+        completed_supply_depots = self.get_my_completed_units_by_type(
+            obs, units.Terran.SupplyDepot)
+        completed_refineries = self.get_my_completed_units_by_type(
+            obs, units.Terran.Refinery)
+        factory = self.get_my_units_by_type(obs, units.Terran.Factory)
+        scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
+        if (len(completed_supply_depots) > 0 and len(completed_refineries) > 0 and len(factory) == 0 and
+                obs.observation.player.minerals >= 200 and obs.observation.player.vespene >= 100
+                and len(scvs) > 0):
+            factory_xy = (25, 21) if self.base_top_left else (30, 45)
+            distances = self.get_distances(obs, scvs, factory_xy)
+            scv = scvs[np.argmin(distances)]
+            return actions.RAW_FUNCTIONS.Build_Factory_pt("now", scv.tag, factory_xy)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    # techlab은 factory의 addon 건물이므로 factory가 건설되어 있어야 함
+    def build_techlab(self, obs):
+        completed_factory = self.get_my_completed_units_by_type(
+            obs, units.Terran.Factory)
+        scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
+        if (len(completed_factory) > 0 and obs.observation.player.minerals >= 50 and obs.observation.player.vespene >= 50
+                and len(scvs) > 0):
+            return actions.RAW_FUNCTIONS.Build_TechLab_quick("now", completed_factory[0].tag)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    # command center 추가 건설
+    def build_command_center(self, obs):
+        completed_command_center = self.get_my_completed_units_by_type(
+            obs, units.Terran.CommandCenter)
+        scvs = self.get_my_units_by_type(obs, units.Terran.SCV)
+        if (len(completed_command_center) > 0 and obs.observation.player.minerals >= 400
+                and len(scvs) > 0):
+            cc_xy = (40, 21) if self.base_top_left else (18, 47)
+            distances = self.get_distances(obs, scvs, cc_xy)
+            scv = scvs[np.argmin(distances)]
+            return actions.RAW_FUNCTIONS.Build_CommandCenter_pt(
+                "now", scv.tag, cc_xy)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    # scv 추가 생성
+    def train_scv(self, obs):
+        completed_command_centers = self.get_my_completed_units_by_type(
+            obs, units.Terran.CommandCenter)
+        free_supply = (obs.observation.player.food_cap -
+                       obs.observation.player.food_used)
+        # food_workers = mineral 일꾼 + vespene 일꾼
+        # print(obs.observation.player.food_workers)
+        if (len(completed_command_centers) > 1 and obs.observation.player.minerals >= 50 and free_supply > 0 and
+                obs.observation.player.food_workers < 15):
+            command_centers = self.get_my_units_by_type(obs, units.Terran.CommandCenter)[1]
+            if command_centers.order_length < 5:
+                return actions.RAW_FUNCTIONS.Train_SCV_quick("now", command_centers.tag)
+        return actions.RAW_FUNCTIONS.no_op()
+
     def train_marine(self, obs):
         completed_barrackses = self.get_my_completed_units_by_type(
             obs, units.Terran.Barracks)
@@ -130,16 +237,84 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
                 return actions.RAW_FUNCTIONS.Train_Marine_quick("now", barracks.tag)
         return actions.RAW_FUNCTIONS.no_op()
 
-    def attack(self, obs):
+    def train_tank(self, obs):
+        completed_factorytechlabs = self.get_my_completed_units_by_type(
+            obs, units.Terran.FactoryTechLab)
+        free_supply = (obs.observation.player.food_cap -
+                       obs.observation.player.food_used)
+        # techlab이 건설되어야 tank 생성 가능
+        if (len(completed_factorytechlabs) > 0 and obs.observation.player.minerals >= 150 and obs.observation.player.vespene >= 100
+                and free_supply > 0):
+            factory = self.get_my_units_by_type(obs, units.Terran.Factory)[0]
+            if factory.order_length < 5:
+                return actions.RAW_FUNCTIONS.Train_SiegeTank_quick("now", factory.tag)
+        return actions.RAW_FUNCTIONS.no_op()
+
+    def marine_attack(self, obs):
         marines = self.get_my_units_by_type(obs, units.Terran.Marine)
-        if len(marines) > 0:
+
+        if self.unit_type_is_selected(obs, units.Terran.Barracks):
+            if len(marines) > 0 and len(marines) < 15:
+                if self.base_top_left:
+                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
+                else:
+                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
+
+        if len(marines) == 15:
+            attack_xy = (38, 44) if self.base_top_left else (19, 23)
+
+            marins_tag = []
+            for marine in marines:
+                marins_tag.append(marine.tag)
+            # marine 사정거리 4
+            x_offset = random.randint(-4, 4)
+            y_offset = random.randint(-4, 4)
+            return actions.RAW_FUNCTIONS.Attack_pt(
+                "now", marins_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
+        elif len(marines) > 15:
             attack_xy = (38, 44) if self.base_top_left else (19, 23)
             distances = self.get_distances(obs, marines, attack_xy)
             marine = marines[np.argmax(distances)]
+            # marine 사정거리 4
             x_offset = random.randint(-4, 4)
             y_offset = random.randint(-4, 4)
             return actions.RAW_FUNCTIONS.Attack_pt(
                 "now", marine.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
+        return actions.RAW_FUNCTIONS.no_op()
+
+    def tank_attack(self, obs):
+        tanks = self.get_my_units_by_type(obs, units.Terran.SiegeTank)
+
+        if self.unit_type_is_selected(obs, units.Terran.Factory):
+            if len(tanks) > 0 and len(tanks) < 3:
+                if self.base_top_left:
+                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
+                else:
+                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
+
+        if len(tanks) == 3:
+            attack_xy = (38, 44) if self.base_top_left else (19, 23)
+            tanks_tag = []
+            for tank in tanks:
+                tanks_tag.append(tank.tag)
+            # tank 사정거리 7
+            x_offset = random.randint(-7, 7)
+            y_offset = random.randint(-7, 7)
+            return actions.RAW_FUNCTIONS.Attack_pt(
+                "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
+        elif len(tanks) > 3:
+            attack_xy = (38, 44) if self.base_top_left else (19, 23)
+            distances = self.get_distances(obs, tanks, attack_xy)
+            tank = tanks[np.argmax(distances)]
+            # tank 사정거리 7
+            x_offset = random.randint(-7, 7)
+            y_offset = random.randint(-7, 7)
+            return actions.RAW_FUNCTIONS.Attack_pt(
+                "now", tank.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
         return actions.RAW_FUNCTIONS.no_op()
 
 class TerranRandomAgent(TerranAgentWithRawActsAndRawObs):
@@ -152,8 +327,8 @@ class TerranRLAgentWithRawActsAndRawObs(TerranAgentWithRawActsAndRawObs):
     def __init__(self):
         super(TerranRLAgentWithRawActsAndRawObs, self).__init__()
 
-        self.s_dim = 21
-        self.a_dim = 6
+        self.s_dim = 21 # state의 개수
+        self.a_dim = 14 # action의 개수
 
         self.lr = 1e-4 * 1
         self.batch_size = 32
@@ -168,17 +343,11 @@ class TerranRLAgentWithRawActsAndRawObs(TerranAgentWithRawActsAndRawObs):
         self.data_file_qnet = 'rlagent_with_vanilla_dqn_qnet'
         self.data_file_qnet_target = 'rlagent_with_vanilla_dqn_qnet_target'
 
-        self.qnetwork = NaiveMultiLayerPerceptron(input_dim=self.s_dim,
-                           output_dim=self.a_dim,
-                           num_neurons=[128],
-                           hidden_act_func='ReLU',
-                           out_act_func='Identity').to(device)
+        self.qnetwork = DuelingQNet(input_dim=self.s_dim,
+                           output_dim=self.a_dim).to(device)
 
-        self.qnetwork_target = NaiveMultiLayerPerceptron(input_dim=self.s_dim,
-                           output_dim=self.a_dim,
-                           num_neurons=[128],
-                           hidden_act_func='ReLU',
-                           out_act_func='Identity').to(device)
+        self.qnetwork_target = DuelingQNet(input_dim=self.s_dim,
+                           output_dim=self.a_dim).to(device)
 
         if os.path.isfile(self.data_file_qnet + '.pt'):
             self.qnetwork.load_state_dict(torch.load(self.data_file_qnet + '.pt'))
@@ -327,90 +496,6 @@ class TerranRLAgentWithRawActsAndRawObs(TerranAgentWithRawActsAndRawObs):
 
         return getattr(self, action)(obs)
 
-# def main(unused_argv):
-#    agent1 = TerranRLAgentWithRawActsAndRawObs()
-#    agent2 = TerranRandomAgent()
-#    try:
-#        with sc2_env.SC2Env(
-#                map_name="Simple64",
-#                players=[sc2_env.Agent(sc2_env.Race.terran),
-#                         sc2_env.Agent(sc2_env.Race.terran)],
-#                agent_interface_format=features.AgentInterfaceFormat(
-#                    action_space=actions.ActionSpace.RAW,
-#                    use_raw_units=True,
-#                    raw_resolution=64,
-#                ),
-#                step_mul=8,
-#                disable_fog=True,
-#        ) as env:
-#            run_loop.run_loop([agent1, agent2], env, max_episodes=1000)
-#    except KeyboardInterrupt:
-#        pass
-
-
-# def main(unused_argv):
-#     agent = TerranRLAgentWithRawActsAndRawObs()
-#     try:
-#         with sc2_env.SC2Env(
-#                 map_name="Simple64",
-#                 players=[sc2_env.Agent(sc2_env.Race.terran),
-#                          sc2_env.Bot(sc2_env.Race.terran,
-#                                      sc2_env.Difficulty.very_easy)],
-#                 agent_interface_format=features.AgentInterfaceFormat(
-#                     action_space=actions.ActionSpace.RAW,
-#                     use_raw_units=True,
-#                     raw_resolution=64,
-#                 ),
-#                 step_mul=8,
-#                 disable_fog=True,
-#         ) as env:
-#             agent.setup(env.observation_spec(), env.action_spec())
-#
-#             timesteps = env.reset()
-#             agent.reset()
-#
-#             while True:
-#                 step_actions = [agent.step(timesteps[0])]
-#                 if timesteps[0].last():
-#                     break
-#                 timesteps = env.step(step_actions)
-#     except KeyboardInterrupt:
-#         pass
-
-# def main(unused_argv):
-#     agent = TerranRLAgentWithRawActsAndRawObs()
-#     try:
-#         while True:
-#             with sc2_env.SC2Env(
-#                     map_name="Simple64",
-#                     players=[sc2_env.Agent(sc2_env.Race.terran),
-#                              sc2_env.Bot(sc2_env.Race.terran,
-#                                          sc2_env.Difficulty.very_easy)],
-#                     agent_interface_format=features.AgentInterfaceFormat(
-#                         action_space=actions.ActionSpace.RAW,
-#                         use_raw_units=True,
-#                         raw_resolution=64,
-#                     ),
-#                     step_mul=8,
-#                     disable_fog=True,
-#                     game_steps_per_episode=0,
-#                     visualize=False) as env:
-#
-#               agent.setup(env.observation_spec(), env.action_spec())
-#
-#               timesteps = env.reset()
-#               agent.reset()
-#
-#               while True:
-#                   step_actions = [agent.step(timesteps[0])]
-#                   if timesteps[0].last():
-#                       break
-#                   timesteps = env.step(step_actions)
-#
-#     except KeyboardInterrupt:
-#         pass
-
-
 def main(unused_argv):
    agent1 = TerranRLAgentWithRawActsAndRawObs()
    try:
@@ -418,13 +503,13 @@ def main(unused_argv):
                map_name="Simple64",
                players=[sc2_env.Agent(sc2_env.Race.terran),
                         sc2_env.Bot(sc2_env.Race.terran,
-                                    sc2_env.Difficulty.very_easy)],
+                                    sc2_env.Difficulty.easy)],
                agent_interface_format=features.AgentInterfaceFormat(
                    action_space=actions.ActionSpace.RAW,
                    use_raw_units=True,
                    raw_resolution=64,
                ),
-               step_mul=8,
+               step_mul=16,
                disable_fog=True,
                visualize=False
        ) as env:

@@ -51,6 +51,7 @@ class DQN(nn.Module):
         s, a, r, ns = state, action, reward, next_state
 
         # compute Q-Learning target with 'target network'
+        # target network의 weight는 고정
         with torch.no_grad():
             q_max, _ = self.qnet_target(ns).max(dim=-1, keepdims=True)
             q_target = r + self.gamma * q_max * (1 - done)
