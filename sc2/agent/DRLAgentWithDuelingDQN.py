@@ -340,8 +340,8 @@ class TerranRLAgentWithRawActsAndRawObs(TerranAgentWithRawActsAndRawObs):
         self.init_sampling = 4000
         self.target_update_interval = 10
 
-        self.data_file_qnet = 'rlagent_with_vanilla_dqn_qnet'
-        self.data_file_qnet_target = 'rlagent_with_vanilla_dqn_qnet_target'
+        self.data_file_qnet = 'rlagent_with_dueling_dqn_qnet'
+        self.data_file_qnet_target = 'rlagent_with_dueling_dqn_qnet_target'
 
         self.qnetwork = DuelingQNet(input_dim=self.s_dim,
                            output_dim=self.a_dim).to(device)
