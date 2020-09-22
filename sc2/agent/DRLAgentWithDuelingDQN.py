@@ -219,7 +219,7 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
         # food_workers = mineral 일꾼 + vespene 일꾼
         # print(obs.observation.player.food_workers)
         if (len(completed_command_centers) > 1 and obs.observation.player.minerals >= 50 and free_supply > 0 and
-                obs.observation.player.food_workers < 15):
+                obs.observation.player.food_workers < 20):
             command_centers = self.get_my_units_by_type(obs, units.Terran.CommandCenter)[1]
             if command_centers.order_length < 5:
                 return actions.RAW_FUNCTIONS.Train_SCV_quick("now", command_centers.tag)
@@ -252,17 +252,18 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
 
     def marine_attack(self, obs):
         marines = self.get_my_units_by_type(obs, units.Terran.Marine)
+        idle_marines = [marine for marine in marines if marine.order_length == 0]
 
-        if self.unit_type_is_selected(obs, units.Terran.Barracks):
-            if len(marines) > 0 and len(marines) < 15:
-                if self.base_top_left:
-                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
-                else:
-                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
+        # rally point 설정
+        if 0 < len(marines) < 10 and self.unit_type_is_selected(obs, units.Terran.Barracks):
+            if self.base_top_left:
+                return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
+            else:
+                return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
 
-        if len(marines) == 15:
+        # marine 15대가 모였을 때 attack
+        elif len(marines) == 10:
             attack_xy = (38, 44) if self.base_top_left else (19, 23)
-
             marins_tag = []
             for marine in marines:
                 marins_tag.append(marine.tag)
@@ -272,29 +273,33 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
             return actions.RAW_FUNCTIONS.Attack_pt(
                 "now", marins_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
-        elif len(marines) > 15:
-            attack_xy = (38, 44) if self.base_top_left else (19, 23)
-            distances = self.get_distances(obs, marines, attack_xy)
-            marine = marines[np.argmax(distances)]
+        # 명령을 받지 않은 marine이 10 이상 모여있으면 다른 방향으로 공격 시도
+        elif len(idle_marines) > 10:
+            marines_tag = []
+            for marine in idle_marines:
+                marines_tag.append(marine.tag)
+            attack_xy = (18, 47) if self.base_top_left else (40, 21)
             # marine 사정거리 4
             x_offset = random.randint(-4, 4)
             y_offset = random.randint(-4, 4)
             return actions.RAW_FUNCTIONS.Attack_pt(
-                "now", marine.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+                "now", marines_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
         return actions.RAW_FUNCTIONS.no_op()
 
     def tank_attack(self, obs):
         tanks = self.get_my_units_by_type(obs, units.Terran.SiegeTank)
+        idle_tanks = [tank for tank in tanks if tank.order_length == 0]
 
-        if self.unit_type_is_selected(obs, units.Terran.Factory):
-            if len(tanks) > 0 and len(tanks) < 3:
-                if self.base_top_left:
-                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
-                else:
-                    return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
+        # rally point 설정
+        if 0 < len(tanks) < 3 and self.unit_type_is_selected(obs, units.Terran.Factory):
+            if self.base_top_left:
+                return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 21])
+            else:
+                return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
 
-        if len(tanks) == 3:
+        # tank 3대가 모였을 때 attack
+        elif len(tanks) == 3:
             attack_xy = (38, 44) if self.base_top_left else (19, 23)
             tanks_tag = []
             for tank in tanks:
@@ -305,15 +310,17 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
             return actions.RAW_FUNCTIONS.Attack_pt(
                 "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
-        elif len(tanks) > 3:
-            attack_xy = (38, 44) if self.base_top_left else (19, 23)
-            distances = self.get_distances(obs, tanks, attack_xy)
-            tank = tanks[np.argmax(distances)]
+        # 명령을 받지 않은 tank가 3대 이상 모여있으면 다른 방향으로 공격 시도
+        elif len(idle_tanks) > 3:
+            tanks_tag = []
+            for tank in idle_tanks:
+                tanks_tag.append(tank.tag)
+            attack_xy = (18, 47) if self.base_top_left else (40, 21)
             # tank 사정거리 7
             x_offset = random.randint(-7, 7)
             y_offset = random.randint(-7, 7)
             return actions.RAW_FUNCTIONS.Attack_pt(
-                "now", tank.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+                "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
         return actions.RAW_FUNCTIONS.no_op()
 
