@@ -252,7 +252,7 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
 
     def marine_attack(self, obs):
         marines = self.get_my_units_by_type(obs, units.Terran.Marine)
-        idle_marines = [marine for marine in marines if marine.order_length == 0]
+        # idle_marines = [marine for marine in marines if marine.order_length == 0]
 
         # rally point 설정
         if 0 < len(marines) < 10 and self.unit_type_is_selected(obs, units.Terran.Barracks):
@@ -261,7 +261,7 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
             else:
                 return actions.FUNCTIONS.Rally_Units_minimap("now", [29, 46])
 
-        # marine 15대가 모였을 때 attack
+        # marine 10대가 모였을 때 attack
         elif len(marines) == 10:
             attack_xy = (38, 44) if self.base_top_left else (19, 23)
             marins_tag = []
@@ -273,23 +273,32 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
             return actions.RAW_FUNCTIONS.Attack_pt(
                 "now", marins_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
-        # 명령을 받지 않은 marine이 10 이상 모여있으면 다른 방향으로 공격 시도
-        elif len(idle_marines) > 10:
-            marines_tag = []
-            for marine in idle_marines:
-                marines_tag.append(marine.tag)
-            attack_xy = (18, 47) if self.base_top_left else (40, 21)
-            # marine 사정거리 4
+        elif len(marines) > 10:
+            attack_xy = (38, 44) if self.base_top_left else (19, 23)
+            distances = self.get_distances(obs, marines, attack_xy)
+            marine = marines[np.argmax(distances)]
             x_offset = random.randint(-4, 4)
             y_offset = random.randint(-4, 4)
             return actions.RAW_FUNCTIONS.Attack_pt(
-                "now", marines_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+                "now", marine.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
+        # # 명령을 받지 않은 marine이 10 이상 모여있으면 다른 방향으로 공격 시도
+        # elif len(idle_marines) > 10:
+        #     marines_tag = []
+        #     for marine in idle_marines:
+        #         marines_tag.append(marine.tag)
+        #     attack_xy = (18, 47) if self.base_top_left else (40, 21)
+        #     # marine 사정거리 4
+        #     x_offset = random.randint(-4, 4)
+        #     y_offset = random.randint(-4, 4)
+        #     return actions.RAW_FUNCTIONS.Attack_pt(
+        #         "now", marines_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
         return actions.RAW_FUNCTIONS.no_op()
 
     def tank_attack(self, obs):
         tanks = self.get_my_units_by_type(obs, units.Terran.SiegeTank)
-        idle_tanks = [tank for tank in tanks if tank.order_length == 0]
+        # idle_tanks = [tank for tank in tanks if tank.order_length == 0]
 
         # rally point 설정
         if 0 < len(tanks) < 3 and self.unit_type_is_selected(obs, units.Terran.Factory):
@@ -310,17 +319,26 @@ class TerranAgentWithRawActsAndRawObs(base_agent.BaseAgent):
             return actions.RAW_FUNCTIONS.Attack_pt(
                 "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
-        # 명령을 받지 않은 tank가 3대 이상 모여있으면 다른 방향으로 공격 시도
-        elif len(idle_tanks) > 3:
-            tanks_tag = []
-            for tank in idle_tanks:
-                tanks_tag.append(tank.tag)
-            attack_xy = (18, 47) if self.base_top_left else (40, 21)
-            # tank 사정거리 7
-            x_offset = random.randint(-7, 7)
-            y_offset = random.randint(-7, 7)
+        elif len(tanks) > 3:
+            attack_xy = (38, 47) if self.base_top_left else (19, 23)
+            distances = self.get_distances(obs, tanks, attack_xy)
+            tank = tanks[np.argmax(distances)]
+            x_offset = random.randint(-4, 4)
+            y_offset = random.randint(-4, 4)
             return actions.RAW_FUNCTIONS.Attack_pt(
-                "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+                "now", tank.tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
+
+        # # 명령을 받지 않은 tank가 3대 이상 모여있으면 다른 방향으로 공격 시도
+        # elif len(idle_tanks) > 3:
+        #     tanks_tag = []
+        #     for tank in idle_tanks:
+        #         tanks_tag.append(tank.tag)
+        #     attack_xy = (18, 47) if self.base_top_left else (40, 21)
+        #     # tank 사정거리 7
+        #     x_offset = random.randint(-7, 7)
+        #     y_offset = random.randint(-7, 7)
+        #     return actions.RAW_FUNCTIONS.Attack_pt(
+        #         "now", tanks_tag, (attack_xy[0] + x_offset, attack_xy[1] + y_offset))
 
         return actions.RAW_FUNCTIONS.no_op()
 
